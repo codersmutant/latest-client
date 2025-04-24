@@ -117,19 +117,19 @@
      */
     function handlePayPalButtonClick() {
     if (creatingOrder || orderCreated) {
-        console.log('Already processing an order, ignoring click');
+        //console.log('Already processing an order, ignoring click');
         return;
     }
     
     creatingOrder = true;
-    console.log('PayPal button clicked, starting order creation process');
+    //console.log('PayPal button clicked, starting order creation process');
     
     // Clear previous errors
     clearErrors();
     
     // Validate checkout fields first
     validateCheckoutFields().then(function(validationResult) {
-        console.log('Checkout validation result:', validationResult);
+        //console.log('Checkout validation result:', validationResult);
         if (!validationResult.valid) {
             displayErrors(validationResult.errors);
             creatingOrder = false;
@@ -137,16 +137,16 @@
         }
         
         // Create WooCommerce order
-        console.log('Creating WooCommerce order...');
+        //console.log('Creating WooCommerce order...');
         createOrder().then(function(orderData) {
             // Order created successfully
-            console.log('Order created successfully:', orderData);
+            //console.log('Order created successfully:', orderData);
             orderID = orderData.order_id;
             orderCreated = true;
             creatingOrder = false;
             
             // Send message to iframe with order info
-            console.log('Sending order data to PayPal iframe');
+            //console.log('Sending order data to PayPal iframe');
             sendMessageToIframe({
                 action: 'create_paypal_order',
                 order_id: orderID,
@@ -154,7 +154,7 @@
                 proxy_data: orderData.proxy_data
             });
         }).catch(function(error) {
-            console.error('Order creation failed:', error);
+            //console.error('Order creation failed:', error);
             creatingOrder = false;
             
             if (error.errors) {
@@ -170,7 +170,7 @@
             });
         });
     }).catch(function(error) {
-        console.error('Validation failed:', error);
+        //console.error('Validation failed:', error);
         creatingOrder = false;
     });
 }
@@ -211,8 +211,8 @@
      * Create WooCommerce order via AJAX
      */
     function createOrder() {
-    console.log("Creating order with the following data:");
-    console.log("Form data:", $('form.checkout').serialize());
+    //console.log("Creating order with the following data:");
+    //console.log("Form data:", $('form.checkout').serialize());
     
     return new Promise(function(resolve, reject) {
         // Get form data
@@ -228,7 +228,7 @@
                 ...parseFormData(formData)
             },
             success: function(response) {
-                console.log("Order creation response:", response);
+                //console.log("Order creation response:", response);
                 if (response.success) {
                     resolve(response.data);
                 } else {
@@ -236,7 +236,7 @@
                 }
             },
             error: function(xhr, status, error) {
-                console.error("Order creation error details:", xhr.responseText);
+                //console.error("Order creation error details:", xhr.responseText);
                 reject({ message: 'Order creation request failed: ' + error, xhr: xhr });
             }
         });
@@ -265,7 +265,7 @@
                 transaction_id: paymentData.transactionID || ''
             },
             success: function(response) {
-                console.log('Complete payment response:', response);
+                //console.log('Complete payment response:', response);
                 if (response.success) {
                     resolve(response.data);
                 } else {
