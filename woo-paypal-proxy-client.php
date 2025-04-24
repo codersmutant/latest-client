@@ -168,7 +168,7 @@ register_activation_hook(__FILE__, 'wpppc_activate');
 
 
 /**
- * AJAX handler for creating a WooCommerce order
+ * AJAX handler for creating a WooCommerce order with detailed line items
  */
 function wpppc_create_order_handler() {
     // Log all incoming data for debugging
@@ -184,27 +184,8 @@ function wpppc_create_order_handler() {
             wp_die();
         }
         
-        // Get test data if available
-        $test_data = !empty($_POST['paypal_test_data']) ? 
-            sanitize_text_field($_POST['paypal_test_data']) : 'Default Test Data';
-        
-        error_log('PayPal Proxy Client - Test data from form: ' . $test_data);
-        
         // Create a simple order for testing
         $order = wc_create_order();
-        
-        // Add customer data from POST
-        $address = array(
-            'first_name' => isset($_POST['billing_first_name']) ? sanitize_text_field($_POST['billing_first_name']) : 'Test',
-            'last_name'  => isset($_POST['billing_last_name']) ? sanitize_text_field($_POST['billing_last_name']) : 'Customer',
-            'email'      => isset($_POST['billing_email']) ? sanitize_email($_POST['billing_email']) : 'test@example.com',
-            'phone'      => isset($_POST['billing_phone']) ? sanitize_text_field($_POST['billing_phone']) : '555-555-5555',
-            'address_1'  => isset($_POST['billing_address_1']) ? sanitize_text_field($_POST['billing_address_1']) : 'Test Address',
-            'city'       => isset($_POST['billing_city']) ? sanitize_text_field($_POST['billing_city']) : 'Test City',
-            'state'      => isset($_POST['billing_state']) ? sanitize_text_field($_POST['billing_state']) : 'CA',
-            'postcode'   => isset($_POST['billing_postcode']) ? sanitize_text_field($_POST['billing_postcode']) : '12345',
-            'country'    => isset($_POST['billing_country']) ? sanitize_text_field($_POST['billing_country']) : 'US',
-        );
         
         // Get and set complete billing address with all fields
         $complete_billing = array(
@@ -219,12 +200,10 @@ function wpppc_create_order_handler() {
             'postcode'   => !empty($_POST['billing_postcode']) ? sanitize_text_field($_POST['billing_postcode']) : '',
             'country'    => !empty($_POST['billing_country']) ? sanitize_text_field($_POST['billing_country']) : '',
         );
-
         $order->set_address($complete_billing, 'billing');
 
         // Check if shipping to different address
         $ship_to_different_address = !empty($_POST['ship_to_different_address']);
-
         if ($ship_to_different_address) {
             // Use shipping address fields
             $complete_shipping = array(
@@ -241,15 +220,13 @@ function wpppc_create_order_handler() {
             // Copy from billing address
             $complete_shipping = $complete_billing;
         }
-
         $order->set_address($complete_shipping, 'shipping');
         
-        // *** SHIPPING HANDLING - IMPORTANT FIX ***
+        // *** SHIPPING HANDLING - IMPORTANT ***
         // Get chosen shipping methods from the session
         $chosen_shipping_methods = WC()->session ? WC()->session->get('chosen_shipping_methods') : array();
-        
-        // Log shipping methods for debugging
-        error_log('PayPal Proxy - Chosen shipping methods: ' . print_r($chosen_shipping_methods, true));
+        $shipping_total = 0;
+        $shipping_tax = 0;
         
         // Store shipping methods in order meta for later recovery if needed
         if (!empty($chosen_shipping_methods)) {
@@ -257,7 +234,6 @@ function wpppc_create_order_handler() {
             
             // Get all available shipping packages
             $packages = WC()->shipping->get_packages();
-            error_log('PayPal Proxy - Available shipping packages: ' . print_r($packages, true));
             
             // Add shipping line items to the order
             $shipping_added = false;
@@ -265,7 +241,6 @@ function wpppc_create_order_handler() {
             foreach ($packages as $package_key => $package) {
                 if (isset($chosen_shipping_methods[$package_key], $package['rates'][$chosen_shipping_methods[$package_key]])) {
                     $shipping_rate = $package['rates'][$chosen_shipping_methods[$package_key]];
-                    error_log('PayPal Proxy - Adding shipping method: ' . $shipping_rate->get_label() . ' with cost: ' . $shipping_rate->get_cost());
                     
                     // Create shipping line item
                     $item = new WC_Order_Item_Shipping();
@@ -285,23 +260,13 @@ function wpppc_create_order_handler() {
                     // Add to order
                     $order->add_item($item);
                     $shipping_added = true;
-                    
-                    // Store shipping rate details in meta for insurance
-                    $order->update_meta_data('_wpppc_shipping_package_'.$package_key, array(
-                        'method_title' => $shipping_rate->get_label(),
-                        'method_id' => $shipping_rate->get_id(),
-                        'cost' => wc_format_decimal($shipping_rate->get_cost()),
-                        'taxes' => $shipping_rate->get_taxes(),
-                        'meta_data' => $shipping_rate->get_meta_data(),
-                        'instance_id' => $shipping_rate->get_instance_id(),
-                    ));
+                    $shipping_total += $shipping_rate->get_cost();
+                    $shipping_tax += array_sum($shipping_rate->get_taxes());
                 }
             }
             
-            // Fallback for flat rate shipping if no shipping was added but flat rate was selected
+            // Fallback for flat rate shipping if no shipping was added
             if (!$shipping_added && !empty($chosen_shipping_methods[0]) && strpos($chosen_shipping_methods[0], 'flat_rate') !== false) {
-                error_log('PayPal Proxy - Using fallback flat rate shipping');
-                
                 // Try to get flat rate cost from cart
                 $shipping_total = WC()->cart->get_shipping_total();
                 $shipping_tax = WC()->cart->get_shipping_tax();
@@ -315,18 +280,14 @@ function wpppc_create_order_handler() {
                         'taxes'        => array('total' => array($shipping_tax)),
                     ));
                     $order->add_item($item);
-                    error_log('PayPal Proxy - Added fallback flat rate shipping: ' . $shipping_total);
-                } else {
-                    error_log('PayPal Proxy - Could not determine flat rate cost, creating shipping line without cost');
-                    $item = new WC_Order_Item_Shipping();
-                    $item->set_props(array(
-                        'method_title' => 'Flat rate shipping',
-                        'method_id'    => 'flat_rate',
-                    ));
-                    $order->add_item($item);
                 }
             }
         }
+        
+        // Prepare line items array to send to PayPal proxy
+        $line_items = array();
+        $cart_subtotal = 0;
+        $tax_total = 0;
         
         // Add cart items
         if (WC()->cart->is_empty()) {
@@ -335,13 +296,33 @@ function wpppc_create_order_handler() {
             $product->set_name('Test Product');
             $product->set_price(10.00);
             $order->add_product($product, 1);
+            
+            // Add dummy item to line items
+            $line_items[] = array(
+                'name' => 'Test Product',
+                'quantity' => 1,
+                'unit_price' => 10.00,
+                'tax_amount' => 0,
+                'sku' => 'TEST-1',
+                'description' => 'Test product for testing'
+            );
+            
+            $cart_subtotal = 10.00;
         } else {
-            // Add real cart items
+            // Process real cart items
             foreach (WC()->cart->get_cart() as $cart_item_key => $cart_item) {
                 $product = $cart_item['data'];
+                
+                // Get product details
+                $name = $product->get_name();
+                $quantity = $cart_item['quantity'];
+                $price = $cart_item['line_subtotal'] / $quantity; // Unit price without tax
+                $tax = $cart_item['line_tax'] / $quantity; // Unit tax
+                
+                // Add to order
                 $order->add_product(
                     $product,
-                    $cart_item['quantity'],
+                    $quantity,
                     array(
                         'subtotal' => $cart_item['line_subtotal'],
                         'total' => $cart_item['line_total'],
@@ -350,18 +331,32 @@ function wpppc_create_order_handler() {
                         'taxes' => $cart_item['line_tax_data']
                     )
                 );
+                
+                // Add to line items array for PayPal
+                $line_items[] = array(
+                    'name' => $name,
+                    'quantity' => $quantity,
+                    'unit_price' => wc_format_decimal($price, 2),
+                    'tax_amount' => wc_format_decimal($cart_item['line_tax'], 2),
+                    'sku' => $product->get_sku() ? $product->get_sku() : 'SKU-' . $product->get_id(),
+                    'description' => $product->get_short_description() ? substr(wp_strip_all_tags($product->get_short_description()), 0, 127) : ''
+                );
+                
+                $cart_subtotal += $cart_item['line_subtotal'];
+                $tax_total += $cart_item['line_tax'];
             }
         }
         
         // Set payment method
         $order->set_payment_method('paypal_proxy');
         
-        // Calculate totals with shipping
+        // Calculate totals
         $order->calculate_shipping();
         $order->calculate_totals();
         
         // Log the order totals for debugging
-        error_log('PayPal Proxy - Order totals after calculation: ' . print_r(array(
+        error_log('PayPal Proxy - Order totals: ' . print_r(array(
+            'subtotal' => $order->get_subtotal(),
             'shipping_total' => $order->get_shipping_total(),
             'shipping_tax' => $order->get_shipping_tax(),
             'cart_tax' => $order->get_cart_tax(),
@@ -370,9 +365,6 @@ function wpppc_create_order_handler() {
         
         // Set order status
         $order->update_status('pending', __('Awaiting PayPal payment', 'woo-paypal-proxy-client'));
-        
-        // Save the test data to order meta
-        $order->update_meta_data('_paypal_test_data', $test_data);
         $order->save();
         
         $order_id = $order->get_id();
@@ -382,9 +374,27 @@ function wpppc_create_order_handler() {
         $proxy_url = get_option('wpppc_proxy_url', '');
         $api_key = get_option('wpppc_api_key', '');
         
-        // Send the test data and address data to the storage endpoint
+        // Create order details array with all information needed by PayPal
+        $order_details = array(
+            'api_key' => $api_key,
+            'order_id' => $order_id,
+            'test_data' => !empty($_POST['paypal_test_data']) ? 
+                sanitize_text_field($_POST['paypal_test_data']) : 'Order #' . $order_id,
+            'shipping_address' => $complete_shipping,
+            'billing_address' => $complete_billing,
+            'line_items' => $line_items,
+            'shipping_amount' => $order->get_shipping_total(),
+            'shipping_tax' => $order->get_shipping_tax(),
+            'tax_total' => $order->get_cart_tax() + $order->get_shipping_tax(),
+            'currency' => get_woocommerce_currency(),
+            'prices_include_tax' => wc_prices_include_tax(),
+            'tax_display_cart' => get_option('woocommerce_tax_display_cart'),
+            'tax_display_shop' => get_option('woocommerce_tax_display_shop')
+        );
+        
+        // Send the order details to the storage endpoint
         if (!empty($proxy_url) && !empty($api_key)) {
-            error_log('PayPal Proxy Client - Sending data to: ' . $proxy_url . '/wp-json/wppps/v1/store-test-data');
+            error_log('PayPal Proxy Client - Sending order details to: ' . $proxy_url . '/wp-json/wppps/v1/store-test-data');
             
             $response = wp_remote_post(
                 $proxy_url . '/wp-json/wppps/v1/store-test-data',
@@ -394,24 +404,18 @@ function wpppc_create_order_handler() {
                     'headers' => array(
                         'Content-Type' => 'application/json',
                     ),
-                    'body' => json_encode(array(
-                        'api_key' => $api_key,
-                        'order_id' => $order_id,
-                        'test_data' => $test_data,
-                        'shipping_address' => $complete_shipping,
-                        'billing_address' => $complete_billing
-                    ))
+                    'body' => json_encode($order_details)
                 )
             );
             
             if (is_wp_error($response)) {
-                error_log('PayPal Proxy Client - Error sending data: ' . $response->get_error_message());
+                error_log('PayPal Proxy Client - Error sending order details: ' . $response->get_error_message());
             } else {
                 $body = json_decode(wp_remote_retrieve_body($response), true);
                 error_log('PayPal Proxy Client - Data response: ' . print_r($body, true));
             }
         } else {
-            error_log('PayPal Proxy Client - Missing proxy URL or API key, cannot send data');
+            error_log('PayPal Proxy Client - Missing proxy URL or API key, cannot send order details');
         }
         
         // Return success with order details
