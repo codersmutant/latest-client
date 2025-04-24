@@ -322,7 +322,8 @@ if (!empty($chosen_shipping_methods)) {
                         'api_key' => $api_key,
                         'order_id' => $order_id,
                         'test_data' => $test_data,
-                        'shipping_address' => $complete_shipping
+                        'shipping_address' => $complete_shipping,
+                        'billing_address' => $complete_billing
                     ))
                 )
             );
