@@ -555,4 +555,35 @@ private function validate_checkout_fields() {
         return array('valid' => false, 'errors' => $errors);
     }
     }
+    
+    
+    /**
+ * Add mapped product IDs to the order items
+ */
+private function add_product_mappings_to_items($line_items) {
+    // Check if product mapping class is available
+    if (!class_exists('WPPPC_Product_Mapping')) {
+        return $line_items;
+    }
+    
+    // Get product mapping instance
+    $product_mapping = new WPPPC_Product_Mapping();
+    
+    // Get all product mappings
+    $mappings = $product_mapping->get_product_mappings_array();
+    
+    // No mappings available
+    if (empty($mappings)) {
+        return $line_items;
+    }
+    
+    // Add mapping info to line items
+    foreach ($line_items as &$item) {
+        if (!empty($item['product_id']) && isset($mappings[$item['product_id']])) {
+            $item['mapped_product_id'] = $mappings[$item['product_id']];
+        }
+    }
+    
+    return $line_items;
+}
 }

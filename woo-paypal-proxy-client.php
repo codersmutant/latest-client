@@ -56,10 +56,12 @@ function wpppc_init() {
     require_once WPPPC_PLUGIN_DIR . 'includes/class-woo-paypal-gateway.php';
     require_once WPPPC_PLUGIN_DIR . 'includes/class-api-handler.php';
     require_once WPPPC_PLUGIN_DIR . 'includes/class-admin.php';
+    require_once WPPPC_PLUGIN_DIR . 'includes/class-product-mapping.php';
     
     // Initialize classes
     $api_handler = new WPPPC_API_Handler();
     $admin = new WPPPC_Admin();
+    $product_mapping = new WPPPC_Product_Mapping();
     
     // Add payment gateway to WooCommerce
     add_filter('woocommerce_payment_gateways', 'wpppc_add_gateway');
@@ -163,6 +165,24 @@ function wpppc_activate() {
     add_option('wpppc_proxy_url', '');
     add_option('wpppc_api_key', '');
     add_option('wpppc_api_secret', md5(uniqid(rand(), true)));
+    
+    // Create product mapping table
+    global $wpdb;
+    $table_name = $wpdb->prefix . 'wpppc_product_mappings';
+    $charset_collate = $wpdb->get_charset_collate();
+    
+    $sql = "CREATE TABLE $table_name (
+        id mediumint(9) NOT NULL AUTO_INCREMENT,
+        product_id bigint(20) NOT NULL,
+        server_product_id bigint(20) NOT NULL,
+        created_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY  (id),
+        UNIQUE KEY product_id (product_id)
+    ) $charset_collate;";
+    
+    require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
+    dbDelta($sql);
+
 }
 register_activation_hook(__FILE__, 'wpppc_activate');
 
@@ -339,8 +359,10 @@ function wpppc_create_order_handler() {
                     'unit_price' => wc_format_decimal($price, 2),
                     'tax_amount' => wc_format_decimal($cart_item['line_tax'], 2),
                     'sku' => $product->get_sku() ? $product->get_sku() : 'SKU-' . $product->get_id(),
-                    'description' => $product->get_short_description() ? substr(wp_strip_all_tags($product->get_short_description()), 0, 127) : ''
+                    'description' => $product->get_short_description() ? substr(wp_strip_all_tags($product->get_short_description()), 0, 127) : '',
+                    'product_id' => $product->get_id()
                 );
+                $line_items = add_product_mappings_to_items($line_items);
                 
                 $cart_subtotal += $cart_item['line_subtotal'];
                 $tax_total += $cart_item['line_tax'];
@@ -440,6 +462,34 @@ add_action('wp_ajax_wpppc_create_order', 'wpppc_create_order_handler', 10);
 add_action('wp_ajax_nopriv_wpppc_create_order', 'wpppc_create_order_handler', 10);
 
 
+function add_product_mappings_to_items($line_items) {
+    // Check if product mapping class is available
+    if (!class_exists('WPPPC_Product_Mapping')) {
+        return $line_items;
+    }
+    
+    // Get product mapping instance
+    $product_mapping = new WPPPC_Product_Mapping();
+    
+    // Get all product mappings
+    $mappings = $product_mapping->get_product_mappings_array();
+    
+    // No mappings available
+    if (empty($mappings)) {
+        return $line_items;
+    }
+    
+    // Add mapping info to line items
+    foreach ($line_items as &$item) {
+        if (!empty($item['product_id']) && isset($mappings[$item['product_id']])) {
+            $item['mapped_product_id'] = $mappings[$item['product_id']];
+        }
+    }
+    
+    return $line_items;
+}
+
+
 /**
  * AJAX handler for completing an order after payment
  */
@@ -536,6 +586,38 @@ function wpppc_complete_order_handler() {
 // Register the AJAX handlers
 add_action('wp_ajax_wpppc_complete_order', 'wpppc_complete_order_handler');
 add_action('wp_ajax_nopriv_wpppc_complete_order', 'wpppc_complete_order_handler');
+
+
+/**
+ * Log debug messages
+ */
+function wpppc_log($message) {
+    if (defined('WP_DEBUG') && WP_DEBUG === true) {
+        if (is_array($message) || is_object($message)) {
+            error_log('WPPPC Debug: ' . print_r($message, true));
+        } else {
+            error_log('WPPPC Debug: ' . $message);
+        }
+    }
+}
+
+/**
+ * Get product mapping status for a product
+ */
+function wpppc_get_product_mapping_status($product_id) {
+    if (!class_exists('WPPPC_Product_Mapping')) {
+        return false;
+    }
+    
+    $product_mapping = new WPPPC_Product_Mapping();
+    $mapping = $product_mapping->get_product_mapping($product_id);
+    
+    if ($mapping) {
+        return intval($mapping);
+    }
+    
+    return false;
+}
 
 /**
  * Plugin deactivation hook
