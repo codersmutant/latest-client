@@ -1,11 +1,11 @@
 <?php
 /**
  * Plugin Name: WooCommerce PayPal Proxy Client
- * Plugin URI: https://yourwebsite.com
+ * Plugin URI: https://www.upwork.com/freelancers/~01a6e65817b86d4589
  * Description: Connects to Website B for secure PayPal processing
  * Version: 1.0.0
- * Author: Your Name
- * Author URI: https://yourwebsite.com
+ * Author: Masum Billah
+ * Author URI: https://www.upwork.com/freelancers/~01a6e65817b86d4589
  * Text Domain: woo-paypal-proxy-client
  * Domain Path: /languages
  * WC requires at least: 5.0.0
@@ -471,18 +471,14 @@ function add_product_mappings_to_items($line_items) {
     // Get product mapping instance
     $product_mapping = new WPPPC_Product_Mapping();
     
-    // Get all product mappings
-    $mappings = $product_mapping->get_product_mappings_array();
-    
-    // No mappings available
-    if (empty($mappings)) {
-        return $line_items;
-    }
-    
     // Add mapping info to line items
     foreach ($line_items as &$item) {
-        if (!empty($item['product_id']) && isset($mappings[$item['product_id']])) {
-            $item['mapped_product_id'] = $mappings[$item['product_id']];
+        if (!empty($item['product_id'])) {
+            // Get mapping directly using our enhanced method that checks parent products
+            $server_product_id = $product_mapping->get_product_mapping($item['product_id']);
+            if ($server_product_id) {
+                $item['mapped_product_id'] = $server_product_id;
+            }
         }
     }
     

@@ -458,21 +458,29 @@ public function product_mapping_page() {
      * Render meta box
      */
     public function render_product_mapping_meta_box($post) {
-        // Get current mapping
-        $server_product_id = $this->get_product_mapping($post->ID);
-        
-        // Add nonce for security
-        wp_nonce_field('wpppc_product_mapping_meta_box', 'wpppc_product_mapping_meta_box_nonce');
-        
-        ?>
-        <p>
-            <label for="wpppc_server_product_id"><?php _e('Server Product ID:', 'woo-paypal-proxy-client'); ?></label>
-            <input type="number" id="wpppc_server_product_id" name="wpppc_server_product_id" value="<?php echo esc_attr($server_product_id); ?>" min="1" class="widefat">
-        </p>
-        <p class="description">
-            <?php _e('Map this product to a product on the PayPal Proxy server.', 'woo-paypal-proxy-client'); ?>
-        </p>
-        <?php
+    // Get current mapping
+    $server_product_id = $this->get_product_mapping($post->ID);
+    
+    // Check if this is a variable product
+    $product = wc_get_product($post->ID);
+    $is_variable = $product && $product->is_type('variable');
+    
+    // Add nonce for security
+    wp_nonce_field('wpppc_product_mapping_meta_box', 'wpppc_product_mapping_meta_box_nonce');
+    
+    ?>
+    <p>
+        <label for="wpppc_server_product_id"><?php _e('Server Product ID:', 'woo-paypal-proxy-client'); ?></label>
+        <input type="number" id="wpppc_server_product_id" name="wpppc_server_product_id" value="<?php echo esc_attr($server_product_id); ?>" min="1" class="widefat">
+    </p>
+    <p class="description">
+        <?php _e('Map this product to a product on the PayPal Proxy server.', 'woo-paypal-proxy-client'); ?>
+        <?php if ($is_variable): ?>
+            <br>
+            <strong><?php _e('Note:', 'woo-paypal-proxy-client'); ?></strong> <?php _e('This mapping will apply to all variations of this product.', 'woo-paypal-proxy-client'); ?>
+        <?php endif; ?>
+    </p>
+    <?php
     }
     
     /**
@@ -722,10 +730,23 @@ public function save_all_mappings() {
         global $wpdb;
         $table_name = $wpdb->prefix . 'wpppc_product_mappings';
         
+        // First, try to get direct mapping for this product ID
         $mapping = $wpdb->get_var($wpdb->prepare(
             "SELECT server_product_id FROM $table_name WHERE product_id = %d",
             $product_id
         ));
+        
+        // If no mapping found, check if it's a variation and get parent mapping
+        if (!$mapping) {
+            $product = wc_get_product($product_id);
+            if ($product && $product->is_type('variation')) {
+                $parent_id = $product->get_parent_id();
+                $mapping = $wpdb->get_var($wpdb->prepare(
+                    "SELECT server_product_id FROM $table_name WHERE product_id = %d",
+                    $parent_id
+                ));
+            }
+        }
         
         return $mapping ? $mapping : '';
     }
